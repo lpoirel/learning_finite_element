@@ -155,15 +155,29 @@ def solve_algebric(K, F):
     return du
 
 def solve_non_linear_problem(mesh, element_connect, u, integration_points):
+    convergence = list()
     for iter in range(0, 50):
         # Define and fill stiffness matrix and force vector
         K, F = assemble(mesh, element_connect, u, integration_points_order3)
         du = solve_algebric(K, F)
         u += du
         #plot(mesh, u)
-        print (np.linalg.norm(du, ord=2), np.linalg.norm(du, ord=np.Inf))
-        if np.linalg.norm(du, np.Inf) < 1e-7:
+        du_norm2 = np.linalg.norm(du, ord=2)
+        du_normm = np.linalg.norm(du, ord=np.Inf)
+        print (du_norm2, du_normm)
+        convergence.append((du_norm2, du_normm))
+        if du_normm < 1e-7:
             break
+    return convergence
+
+
+def plot_convergence(conv):
+    fig = plt.figure()
+    plt.plot(np.arange(len(conv)), conv, "+-k", label="convergence")
+    plt.yscale("log")
+    plt.show()
+    plt.close(fig)
+
 
 def plot(mesh, u):
     plt.plot(mesh, u, "+--k", label="u")
@@ -177,7 +191,8 @@ def run():
     # Generate the mesh and initialize fields
     mesh, element_connect = generate_mesh()
     u = np.zeros(mesh.shape, dtype=float)
-    solve_non_linear_problem(mesh, element_connect, u, integration_points_order3)
+    convergence = solve_non_linear_problem(mesh, element_connect, u, integration_points_order3)
+    plot_convergence(convergence)
     plot(mesh, u)
 
 if __name__ == "__main__":
