@@ -5,16 +5,33 @@ Created on Wed Mar 18 10:42:55 2020
 One element and linear problem
 
 @author: SIM/ER
+
+solves {min 0.5*u'^2 + k*u'^3 - fu}, with u(0)=u(1)=0 
+
+Variational formulation: u'*v' + 3k*u'^2*v' = fv , for any v
+
+ODE: -u'' - 3k (u'^2)' = f
+
+Linear problem:
+    Find correction du such that
+    du'*v'+ 6k*u0'*du'*v' = fv - u0'*v' -3k*u0'^2*v'
+
+
+Verification:
+    The solution is u=U0(x-x^3). u'=U0(1-3x^2). u''=-6x*U0
+	f = 6*U0*x - 3k*U0^2*(1-3x^2)^2' = 6*U0*x - 6*U0^2*k*(1-3x^2)*(-6x)
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
 
+k = 0.25
+U0 = 0.4
 
 # Parameters
 x_min = 0.
 x_max = 1.
-nb_nodes = 50
+nb_nodes = 100
 force = 0.1
 #stiffness_coefficient = 100e9 # tipically for a steel
 stiffness_coefficient = 1
@@ -66,8 +83,9 @@ def hooke_material_law(epsilon):
     return sigma
 
 def volumic_force(x):
-    return np.sin(np.pi*x)
-#    return -6.0*x #u=x+x^3. u''=6x
+#    return np.sin(np.pi*x)
+    #return -6*x - 3*k*9*4*x*x*x
+    return 6*x*U0 - 6*k*(1-3*x*x)*(-6*x)*U0*U0
 
 def assemble(mesh, element_connect, u0, integration_points):
     """
@@ -91,20 +109,22 @@ def assemble(mesh, element_connect, u0, integration_points):
             xi = int_point[0]
             weight = int_point[1]
 
-            du_dx = 0.
+            du0_dx = 0.
             for i_local, i in enumerate(nodes_in_element):
-                du_dx += shape_function_prime_1d(i_local, xi)/J*u0[i]
+                du0_dx += shape_function_prime_1d(i_local, xi)/J*u0[i]
 
             for i_local, i in enumerate(nodes_in_element):
                 for j_local, j in enumerate(nodes_in_element):
                     Dphi_i = shape_function_prime_1d(i_local, xi)/J
                     Dphi_j = shape_function_prime_1d(j_local, xi)/J
-                    K[j, i] += weight*stiffness_coefficient*Dphi_i*Dphi_j*J
+                    E = (stiffness_coefficient+6*k*du0_dx)
+                    K[j, i] += weight*E*Dphi_i*Dphi_j*J
 
             # We add -\int u0 \phi_i to F_i
             for j_local, j in enumerate(nodes_in_element):
                 Dphi_j = shape_function_prime_1d(j_local, xi)/J
-                sigma = hooke_material_law(du_dx)
+#                sigma = hooke_material_law(du_dx)
+                sigma = du0_dx + 3*k*du0_dx*du0_dx
                 F[j] -= weight*sigma*Dphi_j*J
 
             # We find F by calculating
@@ -114,7 +134,6 @@ def assemble(mesh, element_connect, u0, integration_points):
                 f = volumic_force(x)
                 phi_j = shape_function_1d(j_local, xi)
                 F[j] += weight*f*phi_j*J
-
 
 
     # Add boundary conditions
@@ -127,7 +146,6 @@ def assemble(mesh, element_connect, u0, integration_points):
 
     F[0] = 0
     F[nb_nodes-1] = 0
-#    F[-1] = force
     return K, F
 
 
@@ -135,10 +153,22 @@ def solve_algebric(K, F):
     du = np.linalg.solve(K, F)
     return du
 
+def solve_non_linear_problem(mesh, element_connect, u, integration_points):
+    for iter in range(0, 50):
+        # Define and fill stiffness matrix and force vector
+        K, F = assemble(mesh, element_connect, u, integration_points_order3)
+        du = solve_algebric(K, F)
+        u = u+du
+        #plot(mesh, u)
+        print du.max(), du.min()
+        if abs(du.max())<0.001 and abs(du.min())<0.001:
+            break
+    return u
 
 def plot(mesh, u):
     plt.plot(mesh, u, "+--k", label="u")
-    plt.plot(mesh, np.sin(np.pi*mesh)/np.pi/np.pi, "+--b", label="sin(x)")
+#    plt.plot(mesh, np.sin(np.pi*mesh)/np.pi/np.pi+mesh, "+--b", label="sin(x)")
+    plt.plot(mesh, U0*(mesh-mesh*mesh*mesh), "+--b", label="Solution")
     plt.show()
 
 
@@ -146,15 +176,8 @@ def run():
     print("Start program")
     # Generate the mesh and initialize fields
     mesh, element_connect = generate_mesh()
-#    u = np.zeros(mesh.shape, dtype=float)
-    # Create a random u, and make sure it satisfies u(0)=u(1)=0
-    u = np.random.normal(size=mesh.shape)
-    u[0] = 0
-    u[nb_nodes-1] = 0
-    # Define and fill stiffness matrix and force vector
-    K, F = assemble(mesh, element_connect, u, integration_points_order3)
-    du = solve_algebric(K, F)
-    u = u+du
+    u = np.zeros(mesh.shape, dtype=float)
+    solve_non_linear_problem(mesh, element_connect, u, integration_points_order3)
     plot(mesh, u)
 
 if __name__ == "__main__":
