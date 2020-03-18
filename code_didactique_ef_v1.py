@@ -67,6 +67,7 @@ def hooke_material_law(epsilon):
 
 def volumic_force(x):
     return np.sin(np.pi*x)
+#    return -6.0*x #u=x+x^3. u''=6x
 
 def assemble(mesh, element_connect, u0, integration_points):
     """
@@ -86,39 +87,35 @@ def assemble(mesh, element_connect, u0, integration_points):
     # using the same \phi as test function.
     for nodes_in_element in element_connect:
         J = 0.5*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
-        for i_local, i in enumerate(nodes_in_element):
-            for j_local, j in enumerate(nodes_in_element):
-                for int_point in integration_points:
-                    xi = int_point[0]
-                    weight = int_point[1]
+        for int_point in integration_points:
+            xi = int_point[0]
+            weight = int_point[1]
+
+            du_dx = 0.
+            for i_local, i in enumerate(nodes_in_element):
+                du_dx += shape_function_prime_1d(i_local, xi)/J*u0[i]
+
+            for i_local, i in enumerate(nodes_in_element):
+                for j_local, j in enumerate(nodes_in_element):
                     Dphi_i = shape_function_prime_1d(i_local, xi)/J
                     Dphi_j = shape_function_prime_1d(j_local, xi)/J
-                    K[j, i] += weight*stiffness_coefficient*Dphi_i*Dphi_j*J;
+                    K[j, i] += weight*stiffness_coefficient*Dphi_i*Dphi_j*J
 
-    # We find F by calculating
-    # F_i = \int_\omega f*\phi_i
-    for nodes_in_element in element_connect:
-        J = 0.5*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
-        for i_local, i in enumerate(nodes_in_element):
-            for int_point in integration_points:
-                xi = int_point[0]
-                weight = int_point[1]
-                x = mesh[nodes_in_element[0]] + 0.5*(xi+1)*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
+            # We add -\int u0 \phi_i to F_i
+            for j_local, j in enumerate(nodes_in_element):
+                Dphi_j = shape_function_prime_1d(j_local, xi)/J
+                sigma = hooke_material_law(du_dx)
+                F[j] -= weight*sigma*Dphi_j*J
+
+            # We find F by calculating
+            # F_i = \int_\omega f*\phi_i
+            x = mesh[nodes_in_element[0]] + 0.5*(xi+1)*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
+            for j_local, j in enumerate(nodes_in_element):
                 f = volumic_force(x)
-                phi_i = shape_function_1d(i_local, xi)
-                F[i] += weight*f*phi_i*J;
+                phi_j = shape_function_1d(j_local, xi)
+                F[j] += weight*f*phi_j*J
 
-    # We add -\int u0 \phi_i to F_i
-    for nodes_in_element in element_connect:
-        J = 0.5*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
-        for i_local, i in enumerate(nodes_in_element):
-            for j_local, j in enumerate(nodes_in_element):
-                for int_point in integration_points:
-                    xi = int_point[0]
-                    weight = int_point[1]
-                    Dphi_i = shape_function_prime_1d(i_local, xi)/J
-                    Dphi_j = shape_function_prime_1d(j_local, xi)/J
-                    F[j] -= weight*stiffness_coefficient*Dphi_i*u0[i]*Dphi_j*J;
+
 
     # Add boundary conditions
     for j in range(0, nb_nodes):
@@ -141,7 +138,7 @@ def solve_algebric(K, F):
 
 def plot(mesh, u):
     plt.plot(mesh, u, "+--k", label="u")
-#    plt.plot(mesh, np.sin(np.pi*mesh)/np.pi/np.pi, "+--b", label="sin(x)")
+    plt.plot(mesh, np.sin(np.pi*mesh)/np.pi/np.pi, "+--b", label="sin(x)")
     plt.show()
 
 
