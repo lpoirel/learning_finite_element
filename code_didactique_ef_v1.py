@@ -14,9 +14,10 @@ import matplotlib.pyplot as plt
 # Parameters
 x_min = 0.
 x_max = 1.
-nb_nodes = 2
+nb_nodes = 50
 force = 0.1
-stiffness_coefficient = 100e9 # tipically for a steel
+#stiffness_coefficient = 100e9 # tipically for a steel
+stiffness_coefficient = 1
 
 integration_points_order1 = [[0,2],]
 integration_points_order3 = [[-0.577350269189625, 1], [+0.577350269189625, 1]]
@@ -37,16 +38,16 @@ def shape_function_1d(index_node, xi):
     index_node is the local index inside the element.
     xi is the local coordinate in the element
     """
-    shape = [(1.+xi)/2, (1.-xi)/2]
+    shape = [(1.-xi)/2, (1.+xi)/2]
     return shape[index_node]
 
 
-def shape_function_prime_1d(index_node):
+def shape_function_prime_1d(index_node, xi):
     """
     The choosen convention is the reference element between [-1,1].
     index_node is the local index inside the element.
     """
-    shape = [1./2, -1./2]
+    shape = [-1./2, 1./2]
     return shape[index_node]
 
 
@@ -64,6 +65,8 @@ def hooke_material_law(epsilon):
     sigma = stiffness_coefficient*epsilon
     return sigma
 
+def volumic_force(x):
+    return np.sin(np.pi*x)
 
 def assemble(mesh, element_connect, u, integration_points):
     """
@@ -82,31 +85,50 @@ def assemble(mesh, element_connect, u, integration_points):
     # then u = \sum u_i \phi_i
     # using the same \phi as test function.
     # Let us define Ke as the element matrix contribution
-    for index_int_point, int_point in enumerate(integration_points):
-        int_point_position, int_point_weight = int_point
-        epsilon = 0.
-        for nodes_in_element in element_connect:
-            index_node_1, index_node_2 = nodes_in_element
-        
-        # 
-            epsilon += shape_function_prime_1d(index_int_point)*u[nodes_in_element[]]
-            
-            # call mat law to compute stress mesure, here Cauchy tensor in 1d
-            sigma = hooke_material_law(eplison)
-        
-    
+    for nodes_in_element in element_connect:
+        J = 0.5*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
+        for i_local, i in enumerate(nodes_in_element):
+            for j_local, j in enumerate(nodes_in_element):
+                for int_point in integration_points:
+                    xi = int_point[0]
+                    weight = int_point[1]
+                    Dphi_i = shape_function_prime_1d(i_local, xi)/J
+                    Dphi_j = shape_function_prime_1d(j_local, xi)/J
+                    K[j, i] += weight*stiffness_coefficient*Dphi_i*Dphi_j*J;
+
+    for nodes_in_element in element_connect:
+        J = 0.5*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
+        for i_local, i in enumerate(nodes_in_element):
+            for int_point in integration_points:
+                xi = int_point[0]
+                weight = int_point[1]
+                x = mesh[nodes_in_element[0]] + 0.5*(xi+1)*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
+                f = volumic_force(x)
+                phi_i = shape_function_1d(i_local, xi)
+                F[i] += weight*f*phi_i*J;
+
     # Add boundary conditions
-    F[0] = 0.
-    F[-1] = force
+    for j in range(0, nb_nodes):
+        K[0, j] = 0
+    K[0,0] = 1
+    for j in range(0, nb_nodes):
+        K[nb_nodes-1, j] = 0
+    K[nb_nodes-1, nb_nodes-1] = 1
+
+    F[0] = 0
+    F[nb_nodes-1] = 0
+#    F[-1] = force
     return K, F
 
 
-def solve_algebric():
-    pass
+def solve_algebric(K, F):
+    du = np.linalg.solve(K, F)
+    return du
 
 
 def plot(mesh, u):
     plt.plot(mesh, u, "+--k", label="u")
+#    plt.plot(mesh, np.sin(np.pi*mesh)/np.pi/np.pi, "+--b", label="sin(x)")
     plt.show()
 
 
@@ -115,10 +137,10 @@ def run():
     # Generate the mesh and initialize fields
     mesh, element_connect = generate_mesh()
     u = np.zeros(mesh.shape, dtype=float)
-    plot(mesh, u)
     # Define and fill stiffness matrix and force vector
     K, F = assemble(mesh, element_connect, u, integration_points_order3)
-
+    u = solve_algebric(K, F)
+    plot(mesh, u)
 
 if __name__ == "__main__":
     run()
