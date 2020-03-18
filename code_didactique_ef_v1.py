@@ -23,7 +23,10 @@ Verification:
 """
 
 import numpy as np
+from scipy.sparse import lil_matrix, csr_matrix, diags
+from scipy.sparse.linalg import spsolve
 import matplotlib.pyplot as plt
+import timeit
 
 k = 0.25
 U0 = 0.4
@@ -31,10 +34,11 @@ U0 = 0.4
 # Parameters
 x_min = 0.
 x_max = 1.
-nb_nodes = 100
+nb_nodes = 1002
 force = 0.1
 #stiffness_coefficient = 100e9 # tipically for a steel
 stiffness_coefficient = 1
+use_sparse = True
 
 integration_points_order1 = [[0,2],]
 integration_points_order3 = [[-0.577350269189625, 1], [+0.577350269189625, 1]]
@@ -87,15 +91,14 @@ def volumic_force(x):
     #return -6*x - 3*k*9*4*x*x*x
     return 6*x*U0 - 6*k*(1-3*x*x)*(-6*x)*U0*U0
 
-def assemble(mesh, element_connect, u0, integration_points):
+def assemble(K, F, mesh, element_connect, u0, integration_points):
     """
     Assemble matrix and vector using first order finite element.
     Element is 1d bar.
     Numerical integration is here degenerated to element length.
     """
-    # Initialise stiffness matrix and force vector
-    K = np.zeros((np.prod(mesh.shape), np.prod(mesh.shape)), dtype=float)
-    F = np.zeros(np.prod(mesh.shape), dtype=float)
+    K *= np.finfo(np.float32).tiny # trick for sparse matrix lil
+    F *= 0.
     # Fill them by looping on elements
     # The physics is div(\sigma) + f = 0
     # \int_\omega \sigma*\phi_prime = \int_\omega f*\phi
@@ -147,26 +150,53 @@ def assemble(mesh, element_connect, u0, integration_points):
     # Neumann on ddl 0 and last ddl, i.e. node 0 and last node
     F[0] = 0
     F[-1] = 0
-    return K, F
 
 
 def solve_algebric(K, F):
-    du = np.linalg.solve(K, F)
+    check = False
+    if use_sparse:
+        du = spsolve(K, F)
+        if check:
+            ducheck = np.linalg.solve(K.toarray(), F)
+            print "Error on linalg: ", np.linalg.norm(du-ducheck)
+    else:
+        du = np.linalg.solve(K, F)
     return du
+
+
+def init_matrix(mesh_shape):
+    """
+    In the case of a sparse matrix, initialize approximatively the structure of the matrix.
+    """
+    K = diags((np.zeros(np.prod(mesh_shape)-1),
+               np.zeros(np.prod(mesh_shape)),
+               np.zeros(np.prod(mesh_shape)-1)), offsets=[-1, 0, 1])
+    K = lil_matrix(K, dtype='d')
+    return K
+
 
 def solve_non_linear_problem(mesh, element_connect, u, integration_points):
     convergence = list()
+    # Initialise stiffness matrix and force vector
+    if use_sparse:
+        K = init_matrix(mesh.shape)
+    else:
+        K = np.zeros((np.prod(mesh.shape), np.prod(mesh.shape)), dtype='d')
+    F = np.zeros(np.prod(mesh.shape), dtype='d')
     for iter in range(0, 50):
         # Define and fill stiffness matrix and force vector
-        K, F = assemble(mesh, element_connect, u, integration_points_order3)
+        t0 = timeit.time.time()
+        assemble(K, F, mesh, element_connect, u, integration_points_order3)
+        t1 = timeit.time.time()
         du = solve_algebric(K, F)
+        t2 = timeit.time.time()
         u += du
         #plot(mesh, u)
         du_norm2 = np.linalg.norm(du, ord=2)
         du_normm = np.linalg.norm(du, ord=np.Inf)
-        print (du_norm2, du_normm)
+        print (du_norm2, du_normm, t1-t0, t2-t1)
         convergence.append((du_norm2, du_normm))
-        if du_normm < 1e-7:
+        if du_normm < 1e-10:
             break
     return convergence
 
@@ -188,12 +218,15 @@ def plot(mesh, u):
 
 def run():
     print("Start program")
+    t0 = timeit.time.time()
     # Generate the mesh and initialize fields
     mesh, element_connect = generate_mesh()
     u = np.zeros(mesh.shape, dtype=float)
     convergence = solve_non_linear_problem(mesh, element_connect, u, integration_points_order3)
+    t1 = timeit.time.time()
     plot_convergence(convergence)
     plot(mesh, u)
+    print("Done in %f seconds" % (t1-t0))
 
 if __name__ == "__main__":
     run()
