@@ -137,15 +137,16 @@ def assemble(mesh, element_connect, u0, integration_points):
 
 
     # Add boundary conditions
-    for j in range(0, nb_nodes):
-        K[0, j] = 0
-    K[0,0] = 1
-    for j in range(0, nb_nodes):
-        K[nb_nodes-1, j] = 0
-    K[nb_nodes-1, nb_nodes-1] = 1
+    # Dirichlet on ddl 0, i.e. node 0
+    K[0, :] = 0
+    K[0, 0] = 1
+    # Dirichlet on last ddl, i.e. last node
+    K[-1, :] = 0
+    K[-1, -1] = 1
 
+    # Neumann on ddl 0 and last ddl, i.e. node 0 and last node
     F[0] = 0
-    F[nb_nodes-1] = 0
+    F[-1] = 0
     return K, F
 
 
