@@ -68,7 +68,7 @@ def hooke_material_law(epsilon):
 def volumic_force(x):
     return np.sin(np.pi*x)
 
-def assemble(mesh, element_connect, u, integration_points):
+def assemble(mesh, element_connect, u0, integration_points):
     """
     Assemble matrix and vector using first order finite element.
     Element is 1d bar.
@@ -84,7 +84,6 @@ def assemble(mesh, element_connect, u, integration_points):
     # We discretize u while using the Ritz method and
     # then u = \sum u_i \phi_i
     # using the same \phi as test function.
-    # Let us define Ke as the element matrix contribution
     for nodes_in_element in element_connect:
         J = 0.5*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
         for i_local, i in enumerate(nodes_in_element):
@@ -96,6 +95,8 @@ def assemble(mesh, element_connect, u, integration_points):
                     Dphi_j = shape_function_prime_1d(j_local, xi)/J
                     K[j, i] += weight*stiffness_coefficient*Dphi_i*Dphi_j*J;
 
+    # We find F by calculating
+    # F_i = \int_\omega f*\phi_i
     for nodes_in_element in element_connect:
         J = 0.5*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
         for i_local, i in enumerate(nodes_in_element):
@@ -106,6 +107,18 @@ def assemble(mesh, element_connect, u, integration_points):
                 f = volumic_force(x)
                 phi_i = shape_function_1d(i_local, xi)
                 F[i] += weight*f*phi_i*J;
+
+    # We add -\int u0 \phi_i to F_i
+    for nodes_in_element in element_connect:
+        J = 0.5*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
+        for i_local, i in enumerate(nodes_in_element):
+            for j_local, j in enumerate(nodes_in_element):
+                for int_point in integration_points:
+                    xi = int_point[0]
+                    weight = int_point[1]
+                    Dphi_i = shape_function_prime_1d(i_local, xi)/J
+                    Dphi_j = shape_function_prime_1d(j_local, xi)/J
+                    F[j] -= weight*stiffness_coefficient*Dphi_i*u0[i]*Dphi_j*J;
 
     # Add boundary conditions
     for j in range(0, nb_nodes):
@@ -136,10 +149,15 @@ def run():
     print("Start program")
     # Generate the mesh and initialize fields
     mesh, element_connect = generate_mesh()
-    u = np.zeros(mesh.shape, dtype=float)
+#    u = np.zeros(mesh.shape, dtype=float)
+    # Create a random u, and make sure it satisfies u(0)=u(1)=0
+    u = np.random.normal(size=mesh.shape)
+    u[0] = 0
+    u[nb_nodes-1] = 0
     # Define and fill stiffness matrix and force vector
     K, F = assemble(mesh, element_connect, u, integration_points_order3)
-    u = solve_algebric(K, F)
+    du = solve_algebric(K, F)
+    u = u+du
     plot(mesh, u)
 
 if __name__ == "__main__":
