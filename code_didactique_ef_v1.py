@@ -158,12 +158,11 @@ def solve_non_linear_problem(mesh, element_connect, u, integration_points):
         # Define and fill stiffness matrix and force vector
         K, F = assemble(mesh, element_connect, u, integration_points_order3)
         du = solve_algebric(K, F)
-        u = u+du
+        u += du
         #plot(mesh, u)
-        print du.max(), du.min()
-        if abs(du.max())<0.001 and abs(du.min())<0.001:
+        print (np.linalg.norm(du, ord=2), np.linalg.norm(du, ord=np.Inf))
+        if np.linalg.norm(du, np.Inf) < 1e-7:
             break
-    return u
 
 def plot(mesh, u):
     plt.plot(mesh, u, "+--k", label="u")
