@@ -29,12 +29,12 @@ import matplotlib.pyplot as plt
 import timeit
 
 k = 0.25
-U0 = 0.4
+U0 = 0.3
 
 # Parameters
 x_min = 0.
 x_max = 1.
-nb_nodes = 1002
+nb_nodes = 10002
 force = 0.1
 #stiffness_coefficient = 100e9 # tipically for a steel
 stiffness_coefficient = 1
@@ -86,12 +86,16 @@ def hooke_material_law(epsilon):
     sigma = stiffness_coefficient*epsilon
     return sigma
 
+def other_non_linear_material_law(epsilon):
+    return epsilon*epsilon
+
 def volumic_force(x):
 #    return np.sin(np.pi*x)
     #return -6*x - 3*k*9*4*x*x*x
     return 6*x*U0 - 6*k*(1-3*x*x)*(-6*x)*U0*U0
 
-def assemble(K, F, mesh, element_connect, u0, integration_points):
+def assemble(K, F, mesh, element_connect, u0, integration_points,
+             mat_law=hooke_material_law):
     """
     Assemble matrix and vector using first order finite element.
     Element is 1d bar.
@@ -175,7 +179,7 @@ def init_matrix(mesh_shape):
     return K
 
 
-def solve_non_linear_problem(mesh, element_connect, u, integration_points):
+def solve_non_linear_problem(mesh, element_connect, u, integration_points, mat_law):
     convergence = list()
     # Initialise stiffness matrix and force vector
     if use_sparse:
@@ -186,7 +190,7 @@ def solve_non_linear_problem(mesh, element_connect, u, integration_points):
     for iter in range(0, 50):
         # Define and fill stiffness matrix and force vector
         t0 = timeit.time.time()
-        assemble(K, F, mesh, element_connect, u, integration_points_order3)
+        assemble(K, F, mesh, element_connect, u, integration_points_order3, mat_law)
         t1 = timeit.time.time()
         du = solve_algebric(K, F)
         t2 = timeit.time.time()
@@ -222,7 +226,9 @@ def run():
     # Generate the mesh and initialize fields
     mesh, element_connect = generate_mesh()
     u = np.zeros(mesh.shape, dtype=float)
-    convergence = solve_non_linear_problem(mesh, element_connect, u, integration_points_order3)
+    convergence = solve_non_linear_problem(mesh, element_connect, u,
+                                           integration_points_order3,
+                                           hooke_material_law)
     t1 = timeit.time.time()
     plot_convergence(convergence)
     plot(mesh, u)
