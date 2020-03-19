@@ -34,8 +34,7 @@ U0 = 0.3
 # Parameters
 x_min = 0.
 x_max = 1.
-nb_nodes = 10002
-force = 0.1
+nb_nodes = 102
 #stiffness_coefficient = 100e9 # tipically for a steel
 stiffness_coefficient = 1
 use_sparse = True
@@ -86,16 +85,26 @@ def hooke_material_law(epsilon):
     sigma = stiffness_coefficient*epsilon
     return sigma
 
-def other_non_linear_material_law(epsilon):
-    return epsilon*epsilon
+def hooke_elasticity_tensor(epsilon):
+    elasticity_tensor = stiffness_coefficient
+    return elasticity_tensor
 
-def volumic_force(x):
-#    return np.sin(np.pi*x)
-    #return -6*x - 3*k*9*4*x*x*x
+def nonlinear_material_law(epsilon):
+    sigma = stiffness_coefficient*(epsilon + 3*k*epsilon*epsilon)
+    return sigma
+
+def nonlinear_elasticity_tensor(epsilon):
+    elasticity_tensor = stiffness_coefficient*(1 + 6*k*epsilon)
+    return elasticity_tensor
+
+def test_volumic_force(x):
     return 6*x*U0 - 6*k*(1-3*x*x)*(-6*x)*U0*U0
 
+def sinusoidal_volumic_force(x):
+    return np.sin(np.pi*x)
+
 def assemble(K, F, mesh, element_connect, u0, integration_points,
-             mat_law=hooke_material_law):
+             mat_law, elasticity_function, volumic_force):
     """
     Assemble matrix and vector using first order finite element.
     Element is 1d bar.
@@ -124,14 +133,13 @@ def assemble(K, F, mesh, element_connect, u0, integration_points,
                 for j_local, j in enumerate(nodes_in_element):
                     Dphi_i = shape_function_prime_1d(i_local, xi)/J
                     Dphi_j = shape_function_prime_1d(j_local, xi)/J
-                    E = (stiffness_coefficient+6*k*du0_dx)
+                    E = elasticity_function(du0_dx)
                     K[j, i] += weight*E*Dphi_i*Dphi_j*J
 
             # We add -\int u0 \phi_i to F_i
             for j_local, j in enumerate(nodes_in_element):
                 Dphi_j = shape_function_prime_1d(j_local, xi)/J
-#                sigma = hooke_material_law(du_dx)
-                sigma = du0_dx + 3*k*du0_dx*du0_dx
+                sigma = mat_law(du0_dx)
                 F[j] -= weight*sigma*Dphi_j*J
 
             # We find F by calculating
@@ -147,12 +155,11 @@ def assemble(K, F, mesh, element_connect, u0, integration_points,
     # Dirichlet on ddl 0, i.e. node 0
     K[0, :] = 0
     K[0, 0] = 1
+    F[0] = 0
+
     # Dirichlet on last ddl, i.e. last node
     K[-1, :] = 0
     K[-1, -1] = 1
-
-    # Neumann on ddl 0 and last ddl, i.e. node 0 and last node
-    F[0] = 0
     F[-1] = 0
 
 
@@ -179,7 +186,7 @@ def init_matrix(mesh_shape):
     return K
 
 
-def solve_non_linear_problem(mesh, element_connect, u, integration_points, mat_law):
+def solve_non_linear_problem(mesh, element_connect, u, integration_points, mat_law, elasticity_function, volumic_force):
     convergence = list()
     # Initialise stiffness matrix and force vector
     if use_sparse:
@@ -190,7 +197,7 @@ def solve_non_linear_problem(mesh, element_connect, u, integration_points, mat_l
     for iter in range(0, 50):
         # Define and fill stiffness matrix and force vector
         t0 = timeit.time.time()
-        assemble(K, F, mesh, element_connect, u, integration_points_order3, mat_law)
+        assemble(K, F, mesh, element_connect, u, integration_points_order3, mat_law, elasticity_function, volumic_force)
         t1 = timeit.time.time()
         du = solve_algebric(K, F)
         t2 = timeit.time.time()
@@ -215,7 +222,7 @@ def plot_convergence(conv):
 
 def plot(mesh, u):
     plt.plot(mesh, u, "+--k", label="u")
-#    plt.plot(mesh, np.sin(np.pi*mesh)/np.pi/np.pi+mesh, "+--b", label="sin(x)")
+    #plt.plot(mesh, np.sin(np.pi*mesh)/np.pi/np.pi, "+--b", label="sin(x)")
     plt.plot(mesh, U0*(mesh-mesh*mesh*mesh), "+--b", label="Solution")
     plt.show()
 
@@ -228,7 +235,8 @@ def run():
     u = np.zeros(mesh.shape, dtype=float)
     convergence = solve_non_linear_problem(mesh, element_connect, u,
                                            integration_points_order3,
-                                           hooke_material_law)
+#                                           hooke_material_law, hooke_elasticity_tensor, sinusoidal_volumic_force)
+                                           nonlinear_material_law, nonlinear_elasticity_tensor, test_volumic_force)
     t1 = timeit.time.time()
     plot_convergence(convergence)
     plot(mesh, u)
