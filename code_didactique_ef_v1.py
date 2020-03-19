@@ -186,7 +186,8 @@ def init_matrix(mesh_shape):
     return K
 
 
-def solve_non_linear_problem(mesh, element_connect, u, integration_points, mat_law, elasticity_function, volumic_force):
+def solve_non_linear_problem(mesh, element_connect, u, integration_points,
+                             mat_law, elasticity_function, volumic_force):
     convergence = list()
     # Initialise stiffness matrix and force vector
     if use_sparse:
@@ -194,28 +195,35 @@ def solve_non_linear_problem(mesh, element_connect, u, integration_points, mat_l
     else:
         K = np.zeros((np.prod(mesh.shape), np.prod(mesh.shape)), dtype='d')
     F = np.zeros(np.prod(mesh.shape), dtype='d')
-    for iter in range(0, 50):
+    # Print title of output log columns
+    print("Iter  N_2(u)       N_inf(u)     T_ass      T_solv")
+    # Loop on Newton iterations
+    for newton_iter in range(0, 50):
         # Define and fill stiffness matrix and force vector
         t0 = timeit.time.time()
-        assemble(K, F, mesh, element_connect, u, integration_points_order3, mat_law, elasticity_function, volumic_force)
+        assemble(K, F, mesh, element_connect, u, integration_points_order3,
+                 mat_law, elasticity_function, volumic_force)
         t1 = timeit.time.time()
         du = solve_algebric(K, F)
         t2 = timeit.time.time()
+        # Add correction
         u += du
-        #plot(mesh, u)
+        # Compute norms of correction and convergence criteria
         du_norm2 = np.linalg.norm(du, ord=2)
         du_normm = np.linalg.norm(du, ord=np.Inf)
-        print (du_norm2, du_normm, t1-t0, t2-t1)
+        print("%4i  %3.5e  %3.5e  %2.3e, %2.3e" % (newton_iter, du_norm2, du_normm, t1-t0, t2-t1))
         convergence.append((du_norm2, du_normm))
         if du_normm < 1e-10:
             break
-    return convergence
+    return np.array(convergence)
 
 
 def plot_convergence(conv):
     fig = plt.figure()
-    plt.plot(np.arange(len(conv)), conv, "+-k", label="convergence")
+    plt.plot(np.arange(len(conv)), conv[:,0], "+-k", label="norm_2(u)")
+    plt.plot(np.arange(len(conv)), conv[:,1], "+--k", label="norm_inf(u)")
     plt.yscale("log")
+    plt.legend()
     plt.show()
     plt.close(fig)
 
@@ -223,12 +231,13 @@ def plot_convergence(conv):
 def plot(mesh, u):
     plt.plot(mesh, u, "+--k", label="u")
     #plt.plot(mesh, np.sin(np.pi*mesh)/np.pi/np.pi, "+--b", label="sin(x)")
-    plt.plot(mesh, U0*(mesh-mesh*mesh*mesh), "+--b", label="Solution")
+    plt.plot(mesh, U0*(mesh-mesh*mesh*mesh), "-b", label="Solution")
+    plt.legend()
     plt.show()
 
 
 def run():
-    print("Start program")
+    print("Start program...")
     t0 = timeit.time.time()
     # Generate the mesh and initialize fields
     mesh, element_connect = generate_mesh()
@@ -236,7 +245,9 @@ def run():
     convergence = solve_non_linear_problem(mesh, element_connect, u,
                                            integration_points_order3,
 #                                           hooke_material_law, hooke_elasticity_tensor, sinusoidal_volumic_force)
-                                           nonlinear_material_law, nonlinear_elasticity_tensor, test_volumic_force)
+                                           nonlinear_material_law,
+                                           nonlinear_elasticity_tensor,
+                                           test_volumic_force)
     t1 = timeit.time.time()
     plot_convergence(convergence)
     plot(mesh, u)
