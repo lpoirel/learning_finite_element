@@ -35,75 +35,80 @@ U0 = 0.3
 x_min = 0.
 x_max = 1.
 nb_nodes = 102
-#stiffness_coefficient = 100e9 # tipically for a steel
-stiffness_coefficient = 1
+#stiffness = 100e9 # tipically for a steel
+stiffness = 1
 use_sparse = True
 
-integration_points_order1 = [[0,2],]
-integration_points_order3 = [[-0.577350269189625, 1], [+0.577350269189625, 1]]
-integration_points_order5 = [[-0.774596669241483, 0.555555555555556],
-                             [0.0, 0.888888888888889],
-                             [+0.774596669241483, 0.555555555555556]]
-integration_points_order7 = [[-0.861136311594052, 0.347854845137454],
-                             [-0.339981043584856, 0.652145154862545],
-                             [+0.861136311594052, 0.347854845137454],
-                             [+0.339981043584856, 0.652145154862545]]
-
-
-# ========== Shape funtions ==========
-
-def shape_functions_1d(xi):
+class UniformMesh1D:
     """
-    The chosen convention is the reference element between [-1,1].
-    xi is the local coordinate in the element
+    A uniform 1D mesh with nb_nodes nodes equally spaced between
+    x_min and x_max.
     """
-    return [(1. - xi) / 2, # shape_function f0 -> f0(-1) = 1., f0(1) = 0.
-            (1. + xi) / 2] # shape_function f1 -> f1(-1) = 0., f1(1) = 1.
+    def __init__(self, x_min, x_max, nb_nodes):
+        self.nb_dof = nb_nodes
+        self.node_coordinates = np.linspace(x_min, x_max, nb_nodes)
+        self.elements = np.array([np.arange(0, nb_nodes - 1, dtype=int),
+                                  np.arange(1, nb_nodes,     dtype=int)]).T
 
+    def shape_functions(self, xi):
+        """
+        The chosen convention is the reference element between [-1,1].
+        xi is the local coordinate in the element
+        """
+        return [(1. - xi) / 2, # shape_function f0 -> f0(-1) = 1., f0(1) = 0.
+                (1. + xi) / 2] # shape_function f1 -> f1(-1) = 0., f1(1) = 1.
 
-def shape_functions_prime_1d(xi):
-    """
-    The chosen convention is the reference element between [-1,1].
-    xi is the local coordinate in the element
-    """
-    return [-1./2, # f0'
-            +1./2] # f1'
+    def shape_functions_prime(self, xi):
+        """
+        The chosen convention is the reference element between [-1,1].
+        xi is the local coordinate in the element
+        """
+        return [-1./2, # f0'
+                +1./2] # f1'
 
+    integration_points_order1 = [[0,2],]
+    integration_points_order3 = [[-0.577350269189625, 1], [+0.577350269189625, 1]]
+    integration_points_order5 = [[-0.774596669241483, 0.555555555555556],
+                                 [0.0, 0.888888888888889],
+                                 [+0.774596669241483, 0.555555555555556]]
+    integration_points_order7 = [[-0.861136311594052, 0.347854845137454],
+                                 [-0.339981043584856, 0.652145154862545],
+                                 [+0.861136311594052, 0.347854845137454],
+                                 [+0.339981043584856, 0.652145154862545]]
 
-def uniform_mesh_1d(x_min, x_max, nb_nodes):
-    """
-    Generate the mesh with numpy for a 1d beam with nb_nodes nodes.
-    """
-    node_coordinates = np.linspace(x_min, x_max, nb_nodes)
-    elements = np.array([np.arange(0, nb_nodes - 1, dtype=int),
-                         np.arange(1, nb_nodes,     dtype=int)]).T
-    return node_coordinates, elements
+class HookeMaterial:
+    def __init__(self, stiffness):
+        self.stiffness = stiffness
 
+    def sigma(self, epsilon):
+        return self.stiffness * epsilon
 
-def hooke_material_law(epsilon):
-    sigma = stiffness_coefficient*epsilon
-    return sigma
+    def elasticity_tensor(self, epsilon):
+        return self.stiffness
 
-def hooke_elasticity_tensor(epsilon):
-    elasticity_tensor = stiffness_coefficient
-    return elasticity_tensor
+class NonLinearTestMaterial:
+    def __init__(self, stiffness, U0, k):
+        self.stiffness = stiffness
+        self.U0, self.k = U0, k
 
-def nonlinear_material_law(epsilon):
-    sigma = stiffness_coefficient*(epsilon + 3*k*epsilon*epsilon)
-    return sigma
+    def sigma(self, epsilon):
+        return self.stiffness*(epsilon + 3*k*epsilon**2)
 
-def nonlinear_elasticity_tensor(epsilon):
-    elasticity_tensor = stiffness_coefficient*(1 + 6*k*epsilon)
-    return elasticity_tensor
+    def elasticity_tensor(self, epsilon):
+        return stiffness*(1 + 6*k*epsilon)
 
-def test_volumic_force(x):
-    return 6*x*U0 - 6*k*(1-3*x*x)*(-6*x)*U0*U0
+    def volumic_force(self, x):
+        U0, k = self.U0, self.k
+        return 6*x*U0 - 6*k*(1 - 3*x**2)*(-6*x)*U0**2
+
+    def true_solution(self, x):
+        return self.U0 * (x - x**3)
 
 def sinusoidal_volumic_force(x):
     return np.sin(np.pi*x)
 
-def assemble(K, F, node_coordinates, elements, u0, integration_points,
-             mat_law, elasticity_function, volumic_force):
+def assemble(K, F, mesh, u0, integration_points,
+             material, volumic_force):
     """
     Assemble matrix and vector using first order finite element.
     Element is 1d bar.
@@ -118,28 +123,29 @@ def assemble(K, F, node_coordinates, elements, u0, integration_points,
     # We discretize u using the Ritz method:
     # u = \sum u_i \phi_i
     # using the same \phi as test function.
-    for nodes_in_element in elements:
-        J = 0.5*(node_coordinates[nodes_in_element[1]]-node_coordinates[nodes_in_element[0]])
+    for nodes_in_element in mesh.elements:
+        x_left, x_right = (mesh.node_coordinates[node] for node in nodes_in_element)
+        J = 0.5*(x_right - x_left)
         for xi, weight in integration_points:
-            phi = shape_functions_1d(xi)
-            dphi_dx = [df_dx/J for df_dx in shape_functions_prime_1d(xi)]
+            phi = mesh.shape_functions(xi)
+            dphi_dx = [df_dx/J for df_dx in mesh.shape_functions_prime(xi)]
             nodes_and_shape_functions = zip(nodes_in_element, phi, dphi_dx)
 
             du0_dx = sum(u0[node_i] * dphi_i_dx
                          for node_i, phi_i, dphi_i_dx in nodes_and_shape_functions)
-            E = elasticity_function(du0_dx)
+            E = material.elasticity_tensor(du0_dx)
             for node_i, phi_i, dphi_i_dx in nodes_and_shape_functions:
                 for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
                     K[node_j, node_i] += weight * E * dphi_i_dx * dphi_j_dx * J
 
             # We add -\int u0 \phi_i to F_i
-            sigma = mat_law(du0_dx)
+            sigma = material.sigma(du0_dx)
             for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
                 F[node_j] -= weight * sigma * dphi_j_dx * J
 
             # We find F by calculating
             # F_i = \int_\omega f*\phi_i
-            x = node_coordinates[nodes_in_element[0]] + 0.5*(xi+1)*(node_coordinates[nodes_in_element[1]]-node_coordinates[nodes_in_element[0]])
+            x = x_left + 0.5*(xi+1)*(x_right - x_left)
             f = volumic_force(x)
             for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
                 F[node_j] += weight * f * phi_j * J
@@ -155,7 +161,6 @@ def assemble(K, F, node_coordinates, elements, u0, integration_points,
     K[-1, -1] = 1
     F[-1] = 0
 
-
 def solve_algebraic(K, F):
     check = False
     if use_sparse:
@@ -167,35 +172,33 @@ def solve_algebraic(K, F):
         du = np.linalg.solve(K, F)
     return du
 
-
-def init_matrix(mesh_shape):
+def init_matrix(nb_dof):
     """
     In the case of a sparse matrix, initialize approximatively the structure of the matrix.
     """
-    K = diags((np.zeros(np.prod(mesh_shape)-1),
-               np.zeros(np.prod(mesh_shape)),
-               np.zeros(np.prod(mesh_shape)-1)), offsets=[-1, 0, 1])
+    K = diags((np.zeros(nb_dof-1),
+               np.zeros(nb_dof),
+               np.zeros(nb_dof-1)), offsets=[-1, 0, 1])
     K = lil_matrix(K, dtype='d')
     return K
 
-
-def solve_non_linear_problem(node_coordinates, elements, u, integration_points,
-                             mat_law, elasticity_function, volumic_force):
+def solve_non_linear_problem(mesh, u, integration_points,
+                             material, volumic_force):
     convergence = list()
     # Initialise stiffness matrix and force vector
     if use_sparse:
-        K = init_matrix(node_coordinates.shape)
+        K = init_matrix(mesh.nb_dof)
     else:
-        K = np.zeros((np.prod(node_coordinates.shape), np.prod(node_coordinates.shape)), dtype='d')
-    F = np.zeros(np.prod(node_coordinates.shape), dtype='d')
+        K = np.zeros((mesh.nb_dof, mesh.nb_dof), dtype='d')
+    F = np.zeros(mesh.nb_dof, dtype='d')
     # Print title of output log columns
     print("Iter  N_2(u)       N_inf(u)     T_ass      T_solv")
     # Loop on Newton iterations
     for newton_iter in range(0, 50):
         # Define and fill stiffness matrix and force vector
         t0 = timeit.time.time()
-        assemble(K, F, node_coordinates, elements, u, integration_points_order3,
-                 mat_law, elasticity_function, volumic_force)
+        assemble(K, F, mesh, u, integration_points,
+                 material, volumic_force)
         t1 = timeit.time.time()
         du = solve_algebraic(K, F)
         t2 = timeit.time.time()
@@ -220,30 +223,28 @@ def plot_convergence(conv):
     plt.show()
     plt.close(fig)
 
-
-def plot(node_coordinates, u):
-    plt.plot(node_coordinates, u, "+--k", label="u")
+def plot(mesh, u, u_compare=None):
+    x = mesh.node_coordinates
+    plt.plot(x, u, "+--k", label="u")
     #plt.plot(node_coordinates, np.sin(np.pi*node_coordinates)/np.pi/np.pi, "+--b", label="sin(x)")
-    plt.plot(node_coordinates, U0*(node_coordinates-node_coordinates**3), "-b", label="Solution")
+    if u_compare is not None:
+        plt.plot(x, u_compare(x), "-b", label="Solution")
     plt.legend()
     plt.show()
-
 
 def run():
     print("Start program...")
     t0 = timeit.time.time()
     # Generate the mesh and initialize fields
-    node_coordinates, elements = uniform_mesh_1d(x_min, x_max, nb_nodes)
-    u = np.zeros(node_coordinates.shape, dtype=float)
-    convergence = solve_non_linear_problem(node_coordinates, elements, u,
-                                           integration_points_order3,
-#                                           hooke_material_law, hooke_elasticity_tensor, sinusoidal_volumic_force)
-                                           nonlinear_material_law,
-                                           nonlinear_elasticity_tensor,
-                                           test_volumic_force)
+    mesh = UniformMesh1D(x_min, x_max, nb_nodes)
+    u = np.zeros(mesh.nb_dof, dtype=float)
+    test_non_linear = NonLinearTestMaterial(stiffness, U0, k)
+    convergence = solve_non_linear_problem(mesh, u, mesh.integration_points_order3,
+#                                          HookeMaterial, sinusoidal_volumic_force)
+                                           test_non_linear, test_non_linear.volumic_force)
     t1 = timeit.time.time()
     plot_convergence(convergence)
-    plot(node_coordinates, u)
+    plot(mesh, u, u_compare=test_non_linear.true_solution)
     print("Done in %f seconds" % (t1-t0))
 
 if __name__ == "__main__":
