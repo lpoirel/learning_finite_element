@@ -138,15 +138,68 @@ class NonLinearTestProblem:
 def sinusoidal_volumic_force(x):
     return np.sin(np.pi*x)
 
-def assemble(K, F, mesh, u0, integration_points,
+
+class IJVMatrix:
+    def __init__(self, n_dof, n_nz):
+        self.n_dof = n_dof
+        self.I = np.zeros(n_nz, dtype=int)
+        self.J = np.zeros(n_nz, dtype=int)
+        self.V = np.zeros(n_nz, dtype=np.double)
+        self.k = 0
+
+    def __getitem__(self, (i, j)):
+        return 0
+
+    def __setitem__(self, (i, j), v):
+        self.I[self.k], self.J[self.k] = i%self.n_dof, j%self.n_dof
+        self.V[self.k] = v
+        self.k += 1
+
+    def __imul__(self, other):
+        if other == 0:
+            self.k = 0
+            return self
+
+    def tocsr(self):
+        return csr_matrix((self.V[:self.k], (self.I[:self.k], self.J[:self.k])),
+                          shape=(self.n_dof, self.n_dof))
+
+    def toarray(self):
+        return self.tocsr().toarray()
+
+class LinearSystem:
+    def __init__(self, n_dof, sparse=True):
+        self.sparse = sparse
+        if sparse:
+            self.K = IJVMatrix(n_dof, n_dof*8)
+        else:
+            self.K = np.zeros((n_dof, n_dof), dtype='d')
+        self.f = np.zeros(n_dof, dtype='d')
+
+    def initialize(self):
+        self.K *= 0
+        self.f *= 0
+        return self.K, self.f
+
+    def solve(self):
+        check = False
+        if self.sparse:
+            du = spsolve(self.K.tocsr(), self.f)
+            if check:
+                ducheck = np.linalg.solve(self.K.toarray(), self.f)
+                print("Error on linalg: {}".format(np.linalg.norm(du-ducheck)))
+        else:
+            du = np.linalg.solve(self.K, self.f)
+        return du
+
+def assemble(linear_system, mesh, u0, integration_points,
              material, volumic_force):
     """
     Assemble matrix and vector using first order finite element.
     Element is 1d bar.
     Numerical integration is here degenerated to element length.
     """
-    K *= np.finfo(np.float32).tiny # trick for sparse matrix lil
-    F *= 0.
+    K, f = linear_system.initialize()
     # Fill them by looping on elements
     # The physics is div(\sigma) + f = 0
     # \int_\omega \sigma*\phi_prime = \int_\omega f*\phi
@@ -169,76 +222,50 @@ def assemble(K, F, mesh, u0, integration_points,
                 for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
                     K[node_j, node_i] += weight * E * dphi_i_dx * dphi_j_dx * J
 
-            # We add -\int u0 \phi_i to F_i
+            # We add -\int u0 \phi_i to f_i
             sigma = material.sigma(du0_dx)
             for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
-                F[node_j] -= weight * sigma * dphi_j_dx * J
+                f[node_j] -= weight * sigma * dphi_j_dx * J
 
-            # We find F by calculating
-            # F_i = \int_\omega f*\phi_i
+            # We find f by calculating
+            # f_i = \int_\omega f*\phi_i
             x = x_left + 0.5*(xi+1)*(x_right - x_left)
-            f = volumic_force(x)
+            force = volumic_force(x)
             for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
-                F[node_j] += weight * f * phi_j * J
+                f[node_j] += weight * force * phi_j * J
 
     # Add boundary conditions
+    tgv = 1e8
     # Dirichlet on ddl 0, i.e. node 0
-    K[0, :] = 0
-    K[0, 0] = 1
-    F[0] = 0
+    f[0] = 0
+    K[0, 0] += tgv
 
     # Dirichlet on last ddl, i.e. last node
-    K[-1, :] = 0
-    K[-1, -1] = 1
-    F[-1] = 0
-
-def solve_algebraic(K, F):
-    check = False
-    if use_sparse:
-        du = spsolve(K, F)
-        if check:
-            ducheck = np.linalg.solve(K.toarray(), F)
-            print("Error on linalg: {}".format(np.linalg.norm(du-ducheck)))
-    else:
-        du = np.linalg.solve(K, F)
-    return du
-
-def init_matrix(nb_dof):
-    """
-    In the case of a sparse matrix, initialize approximatively the structure of the matrix.
-    """
-    K = diags((np.zeros(nb_dof-1),
-               np.zeros(nb_dof),
-               np.zeros(nb_dof-1)), offsets=[-1, 0, 1])
-    K = lil_matrix(K, dtype='d')
-    return K
+    f[-1] = 0
+    K[-1, -1] += tgv
 
 def solve_non_linear_problem(mesh, u, integration_points,
                              material, volumic_force):
     convergence = list()
     # Initialise stiffness matrix and force vector
-    if use_sparse:
-        K = init_matrix(mesh.nb_dof)
-    else:
-        K = np.zeros((mesh.nb_dof, mesh.nb_dof), dtype='d')
-    F = np.zeros(mesh.nb_dof, dtype='d')
+    linear_system = LinearSystem(mesh.nb_dof, use_sparse)
     # Print title of output log columns
     print("Iter  N_2(u)       N_inf(u)     T_ass      T_solv")
     # Loop on Newton iterations
     for newton_iter in range(0, 50):
         # Define and fill stiffness matrix and force vector
         t0 = timeit.time.time()
-        assemble(K, F, mesh, u, integration_points,
+        assemble(linear_system, mesh, u, integration_points,
                  material, volumic_force)
         t1 = timeit.time.time()
-        du = solve_algebraic(K, F)
+        du = linear_system.solve()
         t2 = timeit.time.time()
         # Add correction
         u += du
         # Compute norms of correction and convergence criteria
         du_norm2 = np.linalg.norm(du, ord=2)
         du_normm = np.linalg.norm(du, ord=np.Inf)
-        print("%4i  %3.5e  %3.5e  %2.3e, %2.3e" % (newton_iter, du_norm2, du_normm, t1-t0, t2-t1))
+        print("{:4d}  {:3.5e}  {:3.5e}  {:2.3e}  {:2.3e}".format(newton_iter, du_norm2, du_normm, t1-t0, t2-t1))
         convergence.append((du_norm2, du_normm))
         if du_normm < 1e-10:
             break
@@ -276,7 +303,7 @@ def run():
     t1 = timeit.time.time()
     plot_convergence(convergence)
     plot(mesh, u, u_compare=problem.true_solution)
-    print("Done in %f seconds" % (t1-t0))
+    print("Done in {} seconds".format(t1-t0))
 
 def test():
     import doctest
