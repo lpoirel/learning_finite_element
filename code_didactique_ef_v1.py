@@ -54,7 +54,7 @@ integration_points_order7 = [[-0.861136311594052, 0.347854845137454],
 
 def shape_function_1d(index_node, xi):
     """
-    The choosen convention is the reference element between [-1,1].
+    The chosen convention is the reference element between [-1,1].
     index_node is the local index inside the element.
     xi is the local coordinate in the element
     """
@@ -64,21 +64,21 @@ def shape_function_1d(index_node, xi):
 
 def shape_function_prime_1d(index_node, xi):
     """
-    The choosen convention is the reference element between [-1,1].
+    The chosen convention is the reference element between [-1,1].
     index_node is the local index inside the element.
     """
     shape = [-1./2, 1./2]
     return shape[index_node]
 
 
-def generate_mesh():
+def uniform_mesh_1d(x_min, x_max, nb_nodes):
     """
     Generate the mesh with numpy for a 1d beam with nb_nodes nodes.
     """
-    mesh = np.linspace(x_min, x_max, nb_nodes)
-    element_connect = np.array([np.arange(0, nb_nodes-1, dtype=int), 
-                                np.arange(1, nb_nodes,   dtype=int)]).T
-    return mesh, element_connect
+    node_coordinates = np.linspace(x_min, x_max, nb_nodes)
+    elements = np.array([np.arange(0, nb_nodes - 1, dtype=int),
+                         np.arange(1, nb_nodes,     dtype=int)]).T
+    return node_coordinates, elements
 
 
 def hooke_material_law(epsilon):
@@ -103,7 +103,7 @@ def test_volumic_force(x):
 def sinusoidal_volumic_force(x):
     return np.sin(np.pi*x)
 
-def assemble(K, F, mesh, element_connect, u0, integration_points,
+def assemble(K, F, node_coordinates, elements, u0, integration_points,
              mat_law, elasticity_function, volumic_force):
     """
     Assemble matrix and vector using first order finite element.
@@ -116,14 +116,12 @@ def assemble(K, F, mesh, element_connect, u0, integration_points,
     # The physics is div(\sigma) + f = 0
     # \int_\omega \sigma*\phi_prime = \int_\omega f*\phi
     # with \phi the test fonction and \omega the element.
-    # We discretize u while using the Ritz method and
-    # then u = \sum u_i \phi_i
+    # We discretize u using the Ritz method:
+    # u = \sum u_i \phi_i
     # using the same \phi as test function.
-    for nodes_in_element in element_connect:
-        J = 0.5*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
-        for int_point in integration_points:
-            xi = int_point[0]
-            weight = int_point[1]
+    for nodes_in_element in elements:
+        J = 0.5*(node_coordinates[nodes_in_element[1]]-node_coordinates[nodes_in_element[0]])
+        for xi, weight in integration_points:
 
             du0_dx = 0.
             for i_local, i in enumerate(nodes_in_element):
@@ -144,7 +142,7 @@ def assemble(K, F, mesh, element_connect, u0, integration_points,
 
             # We find F by calculating
             # F_i = \int_\omega f*\phi_i
-            x = mesh[nodes_in_element[0]] + 0.5*(xi+1)*(mesh[nodes_in_element[1]]-mesh[nodes_in_element[0]])
+            x = node_coordinates[nodes_in_element[0]] + 0.5*(xi+1)*(node_coordinates[nodes_in_element[1]]-node_coordinates[nodes_in_element[0]])
             for j_local, j in enumerate(nodes_in_element):
                 f = volumic_force(x)
                 phi_j = shape_function_1d(j_local, xi)
@@ -163,13 +161,13 @@ def assemble(K, F, mesh, element_connect, u0, integration_points,
     F[-1] = 0
 
 
-def solve_algebric(K, F):
+def solve_algebraic(K, F):
     check = False
     if use_sparse:
         du = spsolve(K, F)
         if check:
             ducheck = np.linalg.solve(K.toarray(), F)
-            print "Error on linalg: ", np.linalg.norm(du-ducheck)
+            print("Error on linalg: {}".format(np.linalg.norm(du-ducheck)))
     else:
         du = np.linalg.solve(K, F)
     return du
@@ -186,25 +184,25 @@ def init_matrix(mesh_shape):
     return K
 
 
-def solve_non_linear_problem(mesh, element_connect, u, integration_points,
+def solve_non_linear_problem(node_coordinates, elements, u, integration_points,
                              mat_law, elasticity_function, volumic_force):
     convergence = list()
     # Initialise stiffness matrix and force vector
     if use_sparse:
-        K = init_matrix(mesh.shape)
+        K = init_matrix(node_coordinates.shape)
     else:
-        K = np.zeros((np.prod(mesh.shape), np.prod(mesh.shape)), dtype='d')
-    F = np.zeros(np.prod(mesh.shape), dtype='d')
+        K = np.zeros((np.prod(node_coordinates.shape), np.prod(node_coordinates.shape)), dtype='d')
+    F = np.zeros(np.prod(node_coordinates.shape), dtype='d')
     # Print title of output log columns
     print("Iter  N_2(u)       N_inf(u)     T_ass      T_solv")
     # Loop on Newton iterations
     for newton_iter in range(0, 50):
         # Define and fill stiffness matrix and force vector
         t0 = timeit.time.time()
-        assemble(K, F, mesh, element_connect, u, integration_points_order3,
+        assemble(K, F, node_coordinates, elements, u, integration_points_order3,
                  mat_law, elasticity_function, volumic_force)
         t1 = timeit.time.time()
-        du = solve_algebric(K, F)
+        du = solve_algebraic(K, F)
         t2 = timeit.time.time()
         # Add correction
         u += du
@@ -228,10 +226,10 @@ def plot_convergence(conv):
     plt.close(fig)
 
 
-def plot(mesh, u):
-    plt.plot(mesh, u, "+--k", label="u")
-    #plt.plot(mesh, np.sin(np.pi*mesh)/np.pi/np.pi, "+--b", label="sin(x)")
-    plt.plot(mesh, U0*(mesh-mesh*mesh*mesh), "-b", label="Solution")
+def plot(node_coordinates, u):
+    plt.plot(node_coordinates, u, "+--k", label="u")
+    #plt.plot(node_coordinates, np.sin(np.pi*node_coordinates)/np.pi/np.pi, "+--b", label="sin(x)")
+    plt.plot(node_coordinates, U0*(node_coordinates-node_coordinates**3), "-b", label="Solution")
     plt.legend()
     plt.show()
 
@@ -240,9 +238,9 @@ def run():
     print("Start program...")
     t0 = timeit.time.time()
     # Generate the mesh and initialize fields
-    mesh, element_connect = generate_mesh()
-    u = np.zeros(mesh.shape, dtype=float)
-    convergence = solve_non_linear_problem(mesh, element_connect, u,
+    node_coordinates, elements = uniform_mesh_1d(x_min, x_max, nb_nodes)
+    u = np.zeros(node_coordinates.shape, dtype=float)
+    convergence = solve_non_linear_problem(node_coordinates, elements, u,
                                            integration_points_order3,
 #                                           hooke_material_law, hooke_elasticity_tensor, sinusoidal_volumic_force)
                                            nonlinear_material_law,
@@ -250,7 +248,7 @@ def run():
                                            test_volumic_force)
     t1 = timeit.time.time()
     plot_convergence(convergence)
-    plot(mesh, u)
+    plot(node_coordinates, u)
     print("Done in %f seconds" % (t1-t0))
 
 if __name__ == "__main__":
