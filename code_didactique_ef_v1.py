@@ -86,7 +86,7 @@ class HookeMaterial:
     def elasticity_tensor(self, epsilon):
         return self.stiffness
 
-class NonLinearTestMaterial:
+class NonLinearMaterial:
     def __init__(self, stiffness, U0, k):
         self.stiffness = stiffness
         self.U0, self.k = U0, k
@@ -96,6 +96,11 @@ class NonLinearTestMaterial:
 
     def elasticity_tensor(self, epsilon):
         return stiffness*(1 + 6*k*epsilon)
+
+class NonLinearTestProblem:
+    def __init__(self, stiffness, U0, k):
+        self.material = NonLinearMaterial(stiffness, U0, k)
+        self.U0, self.k = U0, k
 
     def volumic_force(self, x):
         U0, k = self.U0, self.k
@@ -238,13 +243,13 @@ def run():
     # Generate the mesh and initialize fields
     mesh = UniformMesh1D(x_min, x_max, nb_nodes)
     u = np.zeros(mesh.nb_dof, dtype=float)
-    test_non_linear = NonLinearTestMaterial(stiffness, U0, k)
+    problem = NonLinearTestProblem(stiffness, U0, k)
     convergence = solve_non_linear_problem(mesh, u, mesh.integration_points_order3,
 #                                          HookeMaterial, sinusoidal_volumic_force)
-                                           test_non_linear, test_non_linear.volumic_force)
+                                           problem.material, problem.volumic_force)
     t1 = timeit.time.time()
     plot_convergence(convergence)
-    plot(mesh, u, u_compare=test_non_linear.true_solution)
+    plot(mesh, u, u_compare=problem.true_solution)
     print("Done in %f seconds" % (t1-t0))
 
 if __name__ == "__main__":
