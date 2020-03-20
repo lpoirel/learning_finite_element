@@ -43,6 +43,20 @@ class UniformMesh1D:
     """
     A uniform 1D mesh with nb_nodes nodes equally spaced between
     x_min and x_max.
+    >>> mesh = UniformMesh1D(1, 3, 5)
+    >>> mesh.nb_dof
+    5
+    >>> mesh.node_coordinates
+    array([1. , 1.5, 2. , 2.5, 3. ])
+    >>> mesh.elements.T
+    array([[0, 1, 2, 3],
+           [1, 2, 3, 4]])
+    >>> mesh.shape_functions(-1)
+    [1.0, 0.0]
+    >>> mesh.shape_functions(1)
+    [0.0, 1.0]
+    >>> mesh.shape_functions(.5)
+    [0.25, 0.75]
     """
     def __init__(self, x_min, x_max, nb_nodes):
         self.nb_dof = nb_nodes
@@ -77,6 +91,13 @@ class UniformMesh1D:
                                  [+0.339981043584856, 0.652145154862545]]
 
 class HookeMaterial:
+    """
+    >>> material = HookeMaterial(stiffness=2.)
+    >>> material.sigma(3.)
+    6.0
+    >>> material.elasticity_tensor(3.)
+    2.0
+    """
     def __init__(self, stiffness):
         self.stiffness = stiffness
 
@@ -87,12 +108,19 @@ class HookeMaterial:
         return self.stiffness
 
 class NonLinearMaterial:
+    """
+    >>> material = NonLinearMaterial(stiffness=2., U0=7., k=5.)
+    >>> material.sigma(3.)
+    276.0
+    >>> material.elasticity_tensor(3.)
+    182.0
+    """
     def __init__(self, stiffness, U0, k):
         self.stiffness = stiffness
         self.U0, self.k = U0, k
 
     def sigma(self, epsilon):
-        return self.stiffness*(epsilon + 3*k*epsilon**2)
+        return self.stiffness*(epsilon + 3*self.k*epsilon**2)
 
     def elasticity_tensor(self, epsilon):
         return stiffness*(1 + 6*k*epsilon)
@@ -252,5 +280,10 @@ def run():
     plot(mesh, u, u_compare=problem.true_solution)
     print("Done in %f seconds" % (t1-t0))
 
+def test():
+    import doctest
+    doctest.testmod()
+
 if __name__ == "__main__":
+    test()
     run()
