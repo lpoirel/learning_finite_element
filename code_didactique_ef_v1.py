@@ -52,23 +52,22 @@ integration_points_order7 = [[-0.861136311594052, 0.347854845137454],
 
 # ========== Shape funtions ==========
 
-def shape_function_1d(index_node, xi):
+def shape_functions_1d(xi):
     """
     The chosen convention is the reference element between [-1,1].
-    index_node is the local index inside the element.
     xi is the local coordinate in the element
     """
-    shape = [(1.-xi)/2, (1.+xi)/2]
-    return shape[index_node]
+    return [(1. - xi) / 2, # shape_function f0 -> f0(-1) = 1., f0(1) = 0.
+            (1. + xi) / 2] # shape_function f1 -> f1(-1) = 0., f1(1) = 1.
 
 
-def shape_function_prime_1d(index_node, xi):
+def shape_functions_prime_1d(xi):
     """
     The chosen convention is the reference element between [-1,1].
-    index_node is the local index inside the element.
+    xi is the local coordinate in the element
     """
-    shape = [-1./2, 1./2]
-    return shape[index_node]
+    return [-1./2, # f0'
+            +1./2] # f1'
 
 
 def uniform_mesh_1d(x_min, x_max, nb_nodes):
@@ -122,32 +121,28 @@ def assemble(K, F, node_coordinates, elements, u0, integration_points,
     for nodes_in_element in elements:
         J = 0.5*(node_coordinates[nodes_in_element[1]]-node_coordinates[nodes_in_element[0]])
         for xi, weight in integration_points:
+            phi = shape_functions_1d(xi)
+            dphi_dx = [df_dx/J for df_dx in shape_functions_prime_1d(xi)]
+            nodes_and_shape_functions = zip(nodes_in_element, phi, dphi_dx)
 
-            du0_dx = 0.
-            for i_local, i in enumerate(nodes_in_element):
-                du0_dx += shape_function_prime_1d(i_local, xi)/J*u0[i]
-
-            for i_local, i in enumerate(nodes_in_element):
-                for j_local, j in enumerate(nodes_in_element):
-                    Dphi_i = shape_function_prime_1d(i_local, xi)/J
-                    Dphi_j = shape_function_prime_1d(j_local, xi)/J
-                    E = elasticity_function(du0_dx)
-                    K[j, i] += weight*E*Dphi_i*Dphi_j*J
+            du0_dx = sum(u0[node_i] * dphi_i_dx
+                         for node_i, phi_i, dphi_i_dx in nodes_and_shape_functions)
+            E = elasticity_function(du0_dx)
+            for node_i, phi_i, dphi_i_dx in nodes_and_shape_functions:
+                for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
+                    K[node_j, node_i] += weight * E * dphi_i_dx * dphi_j_dx * J
 
             # We add -\int u0 \phi_i to F_i
-            for j_local, j in enumerate(nodes_in_element):
-                Dphi_j = shape_function_prime_1d(j_local, xi)/J
-                sigma = mat_law(du0_dx)
-                F[j] -= weight*sigma*Dphi_j*J
+            sigma = mat_law(du0_dx)
+            for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
+                F[node_j] -= weight * sigma * dphi_j_dx * J
 
             # We find F by calculating
             # F_i = \int_\omega f*\phi_i
             x = node_coordinates[nodes_in_element[0]] + 0.5*(xi+1)*(node_coordinates[nodes_in_element[1]]-node_coordinates[nodes_in_element[0]])
-            for j_local, j in enumerate(nodes_in_element):
-                f = volumic_force(x)
-                phi_j = shape_function_1d(j_local, xi)
-                F[j] += weight*f*phi_j*J
-
+            f = volumic_force(x)
+            for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
+                F[node_j] += weight * f * phi_j * J
 
     # Add boundary conditions
     # Dirichlet on ddl 0, i.e. node 0
