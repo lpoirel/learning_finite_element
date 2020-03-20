@@ -109,30 +109,28 @@ class HookeMaterial:
 
 class NonLinearMaterial:
     """
-    >>> material = NonLinearMaterial(stiffness=2., U0=7., k=5.)
+    >>> material = NonLinearMaterial(stiffness=2., k=5.)
     >>> material.sigma(3.)
     276.0
     >>> material.elasticity_tensor(3.)
     182.0
     """
-    def __init__(self, stiffness, U0, k):
-        self.stiffness = stiffness
-        self.U0, self.k = U0, k
+    def __init__(self, stiffness, k):
+        self.stiffness, self.k = stiffness, k
 
     def sigma(self, epsilon):
         return self.stiffness*(epsilon + 3*self.k*epsilon**2)
 
     def elasticity_tensor(self, epsilon):
-        return stiffness*(1 + 6*k*epsilon)
+        return self.stiffness*(1 + 6*self.k*epsilon)
 
 class NonLinearTestProblem:
     def __init__(self, stiffness, U0, k):
-        self.material = NonLinearMaterial(stiffness, U0, k)
+        self.material = NonLinearMaterial(stiffness, k)
         self.U0, self.k = U0, k
 
     def volumic_force(self, x):
-        U0, k = self.U0, self.k
-        return 6*x*U0 - 6*k*(1 - 3*x**2)*(-6*x)*U0**2
+        return 6*x*self.U0 - 6*self.k*(1 - 3*x**2)*(-6*x)*self.U0**2
 
     def true_solution(self, x):
         return self.U0 * (x - x**3)
