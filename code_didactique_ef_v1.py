@@ -138,59 +138,75 @@ class NonLinearTestProblem:
 def sinusoidal_volumic_force(x):
     return np.sin(np.pi*x)
 
-
-class IJVMatrix:
-    def __init__(self, n_dof, n_nz):
-        self.n_dof = n_dof
-        self.I = np.zeros(n_nz, dtype=int)
-        self.J = np.zeros(n_nz, dtype=int)
-        self.V = np.zeros(n_nz, dtype=np.double)
-        self.k = 0
-
-    def __getitem__(self, (i, j)):
-        return 0
-
-    def __setitem__(self, (i, j), v):
-        self.I[self.k], self.J[self.k] = i%self.n_dof, j%self.n_dof
-        self.V[self.k] = v
-        self.k += 1
-
-    def __imul__(self, other):
-        if other == 0:
+class SparseLinearSystem:
+    class IJVMatrix:
+        def __init__(self, n_dof, n_reserve):
+            self.n_dof = n_dof
+            self.I = np.empty(n_reserve, dtype=np.int)
+            self.J = np.empty(n_reserve, dtype=np.int)
+            self.V = np.empty(n_reserve, dtype=np.double)
             self.k = 0
-            return self
 
-    def tocsr(self):
-        return csr_matrix((self.V[:self.k], (self.I[:self.k], self.J[:self.k])),
-                          shape=(self.n_dof, self.n_dof))
+        def tocsr(self):
+            return csr_matrix((self.V[:self.k], (self.I[:self.k], self.J[:self.k])),
+                              shape=(self.n_dof, self.n_dof))
 
-    def toarray(self):
-        return self.tocsr().toarray()
-
-class LinearSystem:
-    def __init__(self, n_dof, sparse=True):
-        self.sparse = sparse
-        if sparse:
-            self.K = IJVMatrix(n_dof, n_dof*8)
-        else:
-            self.K = np.zeros((n_dof, n_dof), dtype='d')
-        self.f = np.zeros(n_dof, dtype='d')
+    def __init__(self, n_dof, n_reserve):
+        self.A = self.IJVMatrix(n_dof, n_reserve)
+        self.b = np.zeros(n_dof, dtype=np.double)
 
     def initialize(self):
-        self.K *= 0
-        self.f *= 0
-        return self.K, self.f
+        self.A.k = 0
+        self.b *= 0
+
+    def add_to_matrix(self, row, col, value):
+        A = self.A
+        A.I[A.k] = row % A.n_dof
+        A.J[A.k] = col % A.n_dof
+        A.V[A.k] = value
+        A.k += 1
+
+    def add_to_rhs(self, row, value):
+        self.b[row] += value
+
+    def set_matrix_row_to_zero(self, row):
+        self.A.V[self.A.I == row % self.A.n_dof] = 0
+
+    def set_rhs_row(self, row, value):
+        self.b[row] = value
+
+    def solve(self, verbose=True):
+        assert(self.A.k < len(self.A.V))
+        A_ = self.A.tocsr()
+        x = spsolve(A_, self.b)
+        if verbose:
+            residual = np.linalg.norm(self.b - A_.dot(x))
+            print("Residual norm ||b - Ax||_2 = {}".format(residual))
+        return x
+
+class DenseLinearSystem:
+    def __init__(self, n_dof):
+        self.A = np.zeros((n_dof, n_dof), dtype='d')
+        self.b = np.zeros(n_dof, dtype='d')
+
+    def initialize(self):
+        self.A *= 0
+        self.b *= 0
+
+    def add_to_matrix(self, row, col, value):
+        self.A[row, col] += value
+
+    def add_to_rhs(self, row, value):
+        self.b[row] += value
+
+    def set_rhs_row(self, row, value):
+        self.b[row] = value
+
+    def set_matrix_row_to_zero(self, row):
+        self.A[row, :] = 0
 
     def solve(self):
-        check = False
-        if self.sparse:
-            du = spsolve(self.K.tocsr(), self.f)
-            if check:
-                ducheck = np.linalg.solve(self.K.toarray(), self.f)
-                print("Error on linalg: {}".format(np.linalg.norm(du-ducheck)))
-        else:
-            du = np.linalg.solve(self.K, self.f)
-        return du
+        return np.linalg.solve(self.A, self.b)
 
 def assemble(linear_system, mesh, u0, integration_points,
              material, volumic_force):
@@ -199,7 +215,6 @@ def assemble(linear_system, mesh, u0, integration_points,
     Element is 1d bar.
     Numerical integration is here degenerated to element length.
     """
-    K, f = linear_system.initialize()
     # Fill them by looping on elements
     # The physics is div(\sigma) + f = 0
     # \int_\omega \sigma*\phi_prime = \int_\omega f*\phi
@@ -207,6 +222,7 @@ def assemble(linear_system, mesh, u0, integration_points,
     # We discretize u using the Ritz method:
     # u = \sum u_i \phi_i
     # using the same \phi as test function.
+    linear_system.initialize()
     for nodes_in_element in mesh.elements:
         x_left, x_right = (mesh.node_coordinates[node] for node in nodes_in_element)
         J = 0.5*(x_right - x_left)
@@ -220,35 +236,35 @@ def assemble(linear_system, mesh, u0, integration_points,
             E = material.elasticity_tensor(du0_dx)
             for node_i, phi_i, dphi_i_dx in nodes_and_shape_functions:
                 for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
-                    K[node_j, node_i] += weight * E * dphi_i_dx * dphi_j_dx * J
+                    value = weight * E * dphi_i_dx * dphi_j_dx * J
+                    linear_system.add_to_matrix(node_j, node_i,  value)
 
             # We add -\int u0 \phi_i to f_i
             sigma = material.sigma(du0_dx)
             for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
-                f[node_j] -= weight * sigma * dphi_j_dx * J
+                value = - weight * sigma * dphi_j_dx * J
+                linear_system.add_to_rhs(node_j, value)
 
             # We find f by calculating
             # f_i = \int_\omega f*\phi_i
             x = x_left + 0.5*(xi+1)*(x_right - x_left)
             force = volumic_force(x)
             for node_j, phi_j, dphi_j_dx in nodes_and_shape_functions:
-                f[node_j] += weight * force * phi_j * J
+                value = weight * force * phi_j * J
+                linear_system.add_to_rhs(node_j, value)
 
     # Add boundary conditions
-    tgv = 1e8
-    # Dirichlet on ddl 0, i.e. node 0
-    f[0] = 0
-    K[0, 0] += tgv
-
-    # Dirichlet on last ddl, i.e. last node
-    f[-1] = 0
-    K[-1, -1] += tgv
+    # Dirichlet on ddl 0, i.e. node 0 and last node (-1)
+    for row in 0, -1:
+        linear_system.set_matrix_row_to_zero(row)
+        linear_system.add_to_matrix(row, row, 1.)
+        linear_system.set_rhs_row(row, 0.)
 
 def solve_non_linear_problem(mesh, u, integration_points,
                              material, volumic_force):
     convergence = list()
     # Initialise stiffness matrix and force vector
-    linear_system = LinearSystem(mesh.nb_dof, use_sparse)
+    linear_system = SparseLinearSystem(mesh.nb_dof, 10*mesh.nb_dof)
     # Print title of output log columns
     print("Iter  N_2(u)       N_inf(u)     T_ass      T_solv")
     # Loop on Newton iterations
